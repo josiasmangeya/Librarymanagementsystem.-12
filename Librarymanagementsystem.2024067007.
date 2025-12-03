@@ -1,0 +1,336 @@
+#!/usr/bin/env python3
+"""
+library_management_<2024067007r>.py
+Rockview University - School Library Management System (Python backend)
+
+Replace <StudentNumber> in the filename before submission.
+
+Functionalities:
+ - Add book (persistent storage in books.json)
+ - View all books (table)
+ - Search book by ID or title
+ - Borrow book (records borrower name and date)
+ - Return book
+ - Delete book (bonus)
+ - Menu-driven text frontend (bonus)
+ 
+Follow exam rules: uses classes, functions, file handling, datetime, error handling.
+"""
+
+import json
+import os
+from datetime import datetime
+
+DATA_FILE = "books.json"  # persistent storage file
+
+
+class Book:
+    """A class representing a single book record."""
+    def __init__(self, book_id, title, author, year_published,
+                 availability="Available", borrower=None, date_borrowed=None):
+        self.book_id = str(book_id)
+        self.title = title
+        self.author = author
+        self.year_published = str(year_published)
+        self.availability = availability
+        self.borrower = borrower
+        self.date_borrowed = date_borrowed
+
+    def to_dict(self):
+        """Convert the Book object to a dictionary for JSON serialization."""
+        return {
+            "book_id": self.book_id,
+            "title": self.title,
+            "author": self.author,
+            "year_published": self.year_published,
+            "availability": self.availability,
+            "borrower": self.borrower,
+            "date_borrowed": self.date_borrowed,
+        }
+
+    @staticmethod
+    def from_dict(d):
+        """Create a Book object from a dictionary."""
+        return Book(
+            book_id=d.get("book_id"),
+            title=d.get("title"),
+            author=d.get("author"),
+            year_published=d.get("year_published"),
+            availability=d.get("availability", "Available"),
+            borrower=d.get("borrower"),
+            date_borrowed=d.get("date_borrowed"),
+        )
+
+
+class Library:
+    """A class to manage a collection of books with persistent storage."""
+    def __init__(self, data_file=DATA_FILE):
+        self.data_file = data_file
+        self.books = {}  # key: book_id, value: Book instance
+        self.load_books()
+
+    def load_books(self):
+        """Load books from JSON file into memory."""
+        if not os.path.exists(self.data_file):
+            self.save_books()  # create empty file
+            return
+        try:
+            with open(self.data_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            for item in data:
+                book = Book.from_dict(item)
+                self.books[book.book_id] = book
+        except (json.JSONDecodeError, IOError) as e:
+            # If file is empty or corrupted, start with empty library
+            print(f"[Warning] Could not load {self.data_file}: {e}. Starting with empty library.")
+            self.books = {}
+
+    def save_books(self):
+        """Save current books to JSON file."""
+        try:
+            with open(self.data_file, "w", encoding="utf-8") as f:
+                json.dump([b.to_dict() for b in self.books.values()], f, indent=4)
+        except IOError as e:
+            print(f"[Error] Could not write to {self.data_file}: {e}")
+
+    def add_book(self, book):
+        """Add a Book object to the library; book_id must be unique."""
+        if book.book_id in self.books:
+            raise ValueError(f"A book with ID '{book.book_id}' already exists.")
+        self.books[book.book_id] = book
+        self.save_books()
+
+    def view_all_books(self):
+        """Return a list of Book objects sorted by book_id."""
+        return sorted(self.books.values(), key=lambda b: b.book_id)
+
+    def find_by_id(self, book_id):
+        """Return the Book object matching book_id or None."""
+        return self.books.get(str(book_id))
+
+    def find_by_title(self, title):
+        """Return list of Book objects whose title contains the search term (case-insensitive)."""
+        term = title.lower()
+        return [b for b in self.books.values() if term in b.title.lower()]
+
+    def borrow_book(self, book_id, borrower_name):
+        """Mark a book as borrowed if available, record borrower and date."""
+        book = self.find_by_id(book_id)
+        if not book:
+            raise LookupError("Book not found.")
+        if book.availability == "Borrowed":
+            raise ValueError("Book is already borrowed.")
+        book.availability = "Borrowed"
+        book.borrower = borrower_name
+        book.date_borrowed = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.save_books()
+        return book
+
+    def return_book(self, book_id):
+        """Mark a book as available and clear borrower details."""
+        book = self.find_by_id(book_id)
+        if not book:
+            raise LookupError("Book not found.")
+        if book.availability == "Available":
+            raise ValueError("Book is already available (not borrowed).")
+        book.availability = "Available"
+        book.borrower = None
+        book.date_borrowed = None
+        self.save_books()
+        return book
+
+    def delete_book(self, book_id):
+        """Delete a book by ID. Returns True if deleted, False if not found."""
+        book = self.books.pop(str(book_id), None)
+        if book:
+            self.save_books()
+            return True
+        return False
+
+
+# ---------- Helper functions for UI / formatting ----------
+
+def print_table(books):
+    """Prints a well-formatted table of books to console."""
+    if not books:
+        print("No books found.")
+        return
+
+    # Prepare column widths
+    headers = ["Book ID", "Title", "Author", "Year", "Availability", "Borrower", "Date Borrowed"]
+    rows = []
+    for b in books:
+        rows.append([
+            b.book_id, b.title, b.author, b.year_published,
+            b.availability, b.borrower or "-", b.date_borrowed or "-"
+        ])
+
+    # column widths: max length in each column up to a reasonable limit
+    col_widths = [max(len(str(cell)) for cell in col) for col in zip(*([headers] + rows))]
+    # cap widths for Title and Author to keep table readable
+    col_widths = [min(w, 30) if idx in (1, 2) else w for idx, w in enumerate(col_widths)]
+
+    # format string
+    fmt = " | ".join("{:<" + str(w) + "}" for w in col_widths)
+    sep = "-+-".join("-" * w for w in col_widths)
+
+    print(fmt.format(*headers))
+    print(sep)
+    for row in rows:
+        # truncate Title and Author if too long
+        r = [ (str(cell)[:27] + "...") if idx in (1,2) and len(str(cell)) > 30 else str(cell)
+              for idx, cell in enumerate(row) ]
+        print(fmt.format(*r))
+
+
+def input_non_empty(prompt):
+    """Prompt until non-empty input is entered."""
+    while True:
+        val = input(prompt).strip()
+        if val:
+            return val
+        print("Input cannot be empty. Please try again.")
+
+
+# ---------- Menu and CLI ----------
+
+def add_book_cli(library):
+    print("\n--- Add Book ---")
+    try:
+        book_id = input_non_empty("Enter Book ID: ")
+        if library.find_by_id(book_id):
+            print(f"Error: Book with ID '{book_id}' already exists.")
+            return
+        title = input_non_empty("Enter Title: ")
+        author = input_non_empty("Enter Author: ")
+        year = input_non_empty("Enter Year Published: ")
+        # Basic validation for year
+        try:
+            int(year)
+        except ValueError:
+            print("Warning: Year should be a number. Saving as provided.")
+        book = Book(book_id=book_id, title=title, author=author, year_published=year)
+        library.add_book(book)
+        print(f"Book '{title}' added successfully.")
+    except Exception as e:
+        print(f"[Error] Failed to add book: {e}")
+
+
+def view_all_books_cli(library):
+    print("\n--- All Books ---")
+    books = library.view_all_books()
+    print_table(books)
+
+
+def search_book_cli(library):
+    print("\n--- Search Book ---")
+    choice = input("Search by (1) ID or (2) Title? Enter 1 or 2: ").strip()
+    if choice == "1":
+        bid = input_non_empty("Enter Book ID: ")
+        book = library.find_by_id(bid)
+        if book:
+            print_table([book])
+        else:
+            print("Book not found.")
+    elif choice == "2":
+        title = input_non_empty("Enter title or part of title: ")
+        found = library.find_by_title(title)
+        if found:
+            print_table(found)
+        else:
+            print("No matching books found.")
+    else:
+        print("Invalid choice.")
+
+
+def borrow_book_cli(library):
+    print("\n--- Borrow Book ---")
+    book_id = input_non_empty("Enter Book ID to borrow: ")
+    try:
+        book = library.find_by_id(book_id)
+        if not book:
+            print("Book not found.")
+            return
+        if book.availability == "Borrowed":
+            print(f"Book is already borrowed by {book.borrower} on {book.date_borrowed}.")
+            return
+        borrower = input_non_empty("Enter Borrower's Name: ")
+        library.borrow_book(book_id, borrower)
+        print(f"Book '{book.title}' successfully borrowed by {borrower}.")
+    except Exception as e:
+        print(f"[Error] {e}")
+
+
+def return_book_cli(library):
+    print("\n--- Return Book ---")
+    book_id = input_non_empty("Enter Book ID to return: ")
+    try:
+        book = library.find_by_id(book_id)
+        if not book:
+            print("Book not found.")
+            return
+        if book.availability == "Available":
+            print("Book is already marked as Available.")
+            return
+        library.return_book(book_id)
+        print(f"Book '{book.title}' has been returned and is now available.")
+    except Exception as e:
+        print(f"[Error] {e}")
+
+
+def delete_book_cli(library):
+    print("\n--- Delete Book (Bonus) ---")
+    book_id = input_non_empty("Enter Book ID to delete: ")
+    confirm = input(f"Are you sure you want to delete book ID '{book_id}'? (y/N): ").strip().lower()
+    if confirm != 'y':
+        print("Delete cancelled.")
+        return
+    deleted = library.delete_book(book_id)
+    if deleted:
+        print("Book deleted successfully.")
+    else:
+        print("Book not found; nothing deleted.")
+
+
+def main_menu():
+    library = Library()
+    menu = """
+==== ROCKVIEW LIBRARY MANAGEMENT SYSTEM ====
+1. Add Book
+2. View All Books
+3. Search Book
+4. Borrow Book
+5. Return Book
+6. Delete Book
+7. Exit
+Enter your choice: """
+    while True:
+        try:
+            choice = input(menu).strip()
+            if choice == "1":
+                add_book_cli(library)
+            elif choice == "2":
+                view_all_books_cli(library)
+            elif choice == "3":
+                search_book_cli(library)
+            elif choice == "4":
+                borrow_book_cli(library)
+            elif choice == "5":
+                return_book_cli(library)
+            elif choice == "6":
+                delete_book_cli(library)
+            elif choice == "7":
+                print("Exiting. Goodbye!")
+                break
+            else:
+                print("Invalid choice. Please enter a number 1-7.")
+        except KeyboardInterrupt:
+            print("\nReceived keyboard interrupt. Exiting.")
+            break
+        except Exception as e:
+            print(f"[Unexpected Error] {e}")
+
+
+if __name__ == "__main__":
+    # Run menu if executed directly
+    main_menu()
